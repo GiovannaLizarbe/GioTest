@@ -1,0 +1,182 @@
+version: 2.1
+
+allure: ayte/allure@0.1.3
+node: 'circleci/node:4.1'
+
+workflows:
+  circleci-deploy:
+    jobs:
+      - build:
+          filters:
+            branches:
+              only: branch_circleci 
+           
+jobs:
+  build:
+    machine:
+      image: ubuntu-2004:202201-02
+
+    parameters:
+      version:
+        description: Allure version to use
+        type: string
+        default: 2.13.1
+
+      configuration-path:
+        description: Path to Allure configuration, uses default one if omitted
+        type: string
+        default: /usr/local/share/allure/config/allure.yml
+      target-path:
+        description: Path for report directory
+        type: string
+        default: allure-results
+      results-path:
+        description: Path to directory with test results
+        type: string
+        default: /home/circleci/project/target/allure-results
+      artifact-path:
+        description: Path that will be used when storing result as artifact
+        type: string
+        default: Report/Allure
+
+      branch_pattern:
+        default: .+
+        description: >
+          A comma separated list of regex matchable branch names. Notifications will
+          only be sent if sent from a job from these branches. By default ".+" will
+          be used to match all branches.
+        type: string
+      channel:
+        default: $SLACK_DEFAULT_CHANNEL
+        description: >
+          Select which channel in which to post to. Set the "SLACK_DEFAULT_CHANNEL" environment
+          variable for the default channel.
+        type: string
+      circleci_host:
+        default: 'https://circleci.com'
+        description: |
+          A CircleCI Host which used in a message template.
+        type: string
+      custom:
+        default: ''
+        description: >
+          Custom message template.
+        type: string
+      debug:
+        default: false
+        description: >
+          Enable to view full payload being sent to Slack and response being
+          received from the API call.
+
+          Redacted content can be viewed by re-running the job with SSH and
+          accessing the log files referenced in the job output.
+
+          When run in a persistent build environment such as CircleCI Runner, these
+          debug log files may remain in the system's temporary filesystem
+          indefinitely and accumulate over time.
+        type: boolean
+      event:
+        default: always
+        description: >
+          In what event should this message send? Options: ["fail", "pass", "always"]
+        enum:
+          - fail
+          - pass
+          - always
+        type: enum
+      ignore_errors:
+        default: true
+        description: >
+          Ignore errors posting to Slack.
+
+          Disable to catch initial setup errors. Re-enable to prevent Slack errors
+          from affecting your pipeline.
+        type: boolean
+      invert_match:
+        default: false
+        description: >
+          Invert the branch and tag patterns.
+
+          If set to true, notifications will only be sent if sent from a job from
+          branches and tags that do not match the patterns.
+        type: boolean
+      mentions:
+        default: ''
+        description: >
+          Exports to the "$SLACK_PARAM_MENTIONS" environment variable for use in
+          templates.
+
+          Mention users via the @ symbol: "@USER"
+
+          If the username contains a space, the Slack ID must be used with angled
+          brackets: "<@U8XXXXXXX>"
+        type: string
+      tag_pattern:
+        default: .+
+        description: >
+          A comma separated list of regex matchable tag names. Notifications will
+          only be sent if sent from a job from these branches. By default ".+" will
+          be used to match all tags. Pattern must match the full string, no partial
+          matches.
+        type: string
+      template:
+        default: ''
+        description: >
+          Select which template to use for the notification by its name. The name
+          must be available as an environment variable.
+        type: string
+
+    steps:
+      - checkout
+      - run:
+          name: Allure archive download
+          command: curl -L https://github.com/allure-framework/allure2/releases/download/<< parameters.version >>/allure-commandline-<< parameters.version >>.zip -o /tmp/allure.zip
+      - run:
+          name: Archive extraction
+          command: unzip /tmp/allure.zip
+      - run:
+          name: Allure installation
+          command: sudo mv allure-<< parameters.version >> /usr/local/share/allure
+      - run:
+          name: Allure binary symlinking
+          command: sudo ln -s /usr/local/share/allure/bin/allure /usr/local/bin/allure
+      - run:
+          name: Docker Up 
+          command: docker-compose up -d
+      - run:
+          name: Run test
+          no_output_timeout: 10m
+          command: mvn clean test -Dcucumber.filter.tags="@Test"
+      - run:
+          name: Save test results
+          command: |
+            mkdir -p ~/test-results/junit/
+            find . -type f -regex ".*/target/surefire-reports/.*xml" -exec cp {} ~/test-results/junit/ \;
+          when: always
+      - store_test_results:
+          path: ~/test-results
+      - store_artifacts:
+          path: ~/test-results
+
+      - run:
+          name: Docker Down 
+          command: docker-compose down
+
+      - store_test_results:
+          path: allure-results
+          
+      - store_artifacts:
+          path: allure-results
+          destination: allure-results
+
+      - run:
+          name: Allure report generation (<< parameters.results-path >> -> << parameters.target-path >>)
+          command: |
+            allure generate \
+              --config << parameters.configuration-path >> \
+              --report-dir << parameters.target-path >> \
+              << parameters.results-path >>
+          when: always
+      - store_artifacts:
+          path: << parameters.target-path >>
+          destination: << parameters.artifact-path >> 
