@@ -9,7 +9,7 @@ workflows:
       - build:
           filters:
             branches:
-              only: branch_circleci 
+              only: main 
            
 jobs:
   build:
